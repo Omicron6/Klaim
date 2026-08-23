@@ -55,6 +55,8 @@ export interface Transaction {
   amountUsdc: number;
   network: "Algorand Testnet";
   createdAt: string;
+  /** Real Lora explorer URL when kind === "settled". */
+  explorerUrl?: string | null;
 }
 
 export interface VerificationRecord {

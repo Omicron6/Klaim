@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ExternalLink, Wallet } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import {
   DemoTag,
@@ -13,16 +14,25 @@ import {
 import { Button } from "@/components/ui/button";
 import { SettlementReceipts } from "@/components/app/settlement-receipts";
 import { useKlaim } from "@/lib/klaim/store";
+import type { VerificationRecord } from "@/lib/klaim/types";
+
+interface ServerTx {
+  id: string;
+  claim: string;
+  amountUsdc: number;
+  asset: string;
+  network: string;
+  txId: string | null;
+  explorerUrl: string | null;
+  status: "requires_payment" | "settled" | "failed";
+  createdAt: string;
+}
 
 export const Route = createFileRoute("/verifier/payments")({
   head: () => ({
     meta: [
       { title: "Payments — KLAIM Verifier" },
-      {
-        name: "description",
-        content:
-          "Wallet, USDC balance and x402 settlement history for agent-initiated human verifications on Algorand Testnet.",
-      },
+      { name: "description", content: "x402 settlement history for agent-initiated human verifications on Algorand Testnet." },
       { property: "og:title", content: "Payments — KLAIM Verifier" },
       { property: "og:description", content: "Per-verification x402 settlements in USDC on Algorand Testnet." },
       { property: "og:type", content: "website" },
@@ -34,7 +44,38 @@ export const Route = createFileRoute("/verifier/payments")({
 });
 
 function PaymentsPage() {
-  const { verifications } = useKlaim();
+  const { verifications: demoVerifications } = useKlaim();
+  const [realTxs, setRealTxs] = useState<ServerTx[]>([]);
+
+  useEffect(() => {
+    fetch("/api/v1/transactions")
+      .then((r) => r.json() as Promise<{ transactions: ServerTx[] }>)
+      .then((d) => setRealTxs(d.transactions.filter((t) => t.status === "settled" && t.txId)))
+      .catch(() => {});
+  }, []);
+
+  const realVerifications: VerificationRecord[] = realTxs.map((t) => ({
+    id: t.id,
+    claimId: "age_over_18" as const,
+    claimLabel: t.claim === "age_over_18" ? "Age > 18" : t.claim,
+    subjectDid: "did:identipi:demo-user-001",
+    requestedBy: "AI Agent (MCP)",
+    status: "verified" as const,
+    amountUsdc: t.amountUsdc,
+    network: "Algorand Testnet" as const,
+    transaction: {
+      id: t.txId!,
+      kind: "settled" as const,
+      amountUsdc: t.amountUsdc,
+      network: "Algorand Testnet" as const,
+      createdAt: new Date(t.createdAt).toLocaleString(),
+      explorerUrl: t.explorerUrl,
+    },
+    createdAt: new Date(t.createdAt).toLocaleString(),
+    notDisclosed: ["Date of Birth", "Aadhaar", "PAN", "Address", "Document image"],
+  }));
+
+  const allVerifications = [...realVerifications, ...demoVerifications];
 
   return (
     <div className="space-y-8">
@@ -48,7 +89,7 @@ function PaymentsPage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel accent>
-          <PanelHeader title="Wallet" hint="Demo" />
+          <PanelHeader title="Wallet" hint={realTxs.length > 0 ? "Live" : "Demo"} />
           <div className="space-y-3 p-5">
             <div className="flex items-center gap-3">
               <span className="grid size-9 place-items-center border border-border bg-background text-primary">
@@ -62,9 +103,9 @@ function PaymentsPage() {
               </div>
             </div>
             <div>
-              <KeyValue label="USDC Balance" value={<span className="text-foreground">$10.00 (demo)</span>} />
               <KeyValue label="x402 Status" value={<span className="text-primary">● Enabled</span>} />
-              <KeyValue label="Facilitator" value={<span className="text-muted-foreground">Not connected</span>} />
+              <KeyValue label="Facilitator" value={<span className="text-muted-foreground">GoPlausible</span>} />
+              <KeyValue label="Settlements" value={`${realTxs.length} real transaction${realTxs.length !== 1 ? "s" : ""}`} />
             </div>
           </div>
         </Panel>
@@ -77,24 +118,20 @@ function PaymentsPage() {
             <KeyValue label="Network" value="Algorand Testnet" />
             <KeyValue label="Price per verification" value="0.01 USDC" />
           </div>
-          <div className="p-5 pt-3">
-            <PrivacyNote>
-              Balances and transactions shown here are demo placeholders. Once the x402 backend is connected this page
-              renders real Algorand Testnet settlements.
-            </PrivacyNote>
-          </div>
         </Panel>
       </div>
 
       <Panel>
         <PanelHeader title="Payment history" hint="x402 settlements" />
         <div className="divide-y divide-border">
-          {verifications.map((v) => (
+          {allVerifications.map((v) => (
             <article key={v.id} className="grid gap-3 p-5 sm:grid-cols-[1.2fr_auto] sm:items-center">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-base font-medium text-foreground">{v.claimLabel}</h2>
-                  <StatusPill>✓ Settled</StatusPill>
+                  <StatusPill tone="ok">
+                    {v.transaction.kind === "settled" ? "✓ Settled" : "✓ Settled"}
+                  </StatusPill>
                   {v.transaction.kind === "demo" ? <DemoTag label="Demo" /> : null}
                 </div>
                 <p className="mt-2 font-mono text-[11px] text-muted-foreground">
@@ -102,14 +139,27 @@ function PaymentsPage() {
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">{v.createdAt}</p>
               </div>
-              <Button
-                variant="outline"
-                className="justify-self-start rounded-none sm:justify-self-end"
-                disabled={v.transaction.kind === "demo"}
-                title={v.transaction.kind === "demo" ? "Available once x402 settlement is connected" : undefined}
-              >
-                <ExternalLink className="size-4" /> View on Lora
-              </Button>
+              {v.transaction.kind === "settled" && v.transaction.explorerUrl ? (
+                <a
+                  href={v.transaction.explorerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="justify-self-start sm:justify-self-end"
+                >
+                  <Button variant="outline" className="rounded-none">
+                    <ExternalLink className="size-4" /> View on Lora
+                  </Button>
+                </a>
+              ) : (
+                <Button
+                  variant="outline"
+                  className="justify-self-start rounded-none sm:justify-self-end"
+                  disabled={v.transaction.kind === "demo"}
+                  title={v.transaction.kind === "demo" ? "Available once x402 settlement is connected" : undefined}
+                >
+                  <ExternalLink className="size-4" /> View on Lora
+                </Button>
+              )}
             </article>
           ))}
         </div>

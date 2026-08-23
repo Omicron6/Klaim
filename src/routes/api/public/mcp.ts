@@ -19,6 +19,7 @@ import {
   type McpTool,
 } from "@/lib/klaim/server/mcp.server";
 import { handleVerifyAge } from "../v1/verify/age";
+import { payerConfigured, missingPayerEnv, signPaymentFromResponse } from "@/lib/klaim/server/x402-client.server";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -46,36 +47,98 @@ async function POST({ request }: { request: Request }): Promise<Response> {
     );
   }
 
-  // The MCP layer holds no payment or ZK logic: it forwards to the
-  // x402-protected Verification API and relays whatever that returns.
+  // The MCP layer forwards to the x402-protected Verification API.
+  // If a 402 is returned and payer config exists, it signs and retries server-side.
   const callTool = async (tool: McpTool, args: Record<string, unknown>) => {
+    console.log("[KLAIM MCP] verify_human_age requested");
+
+    const baseHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-KLAIM-Agent-Id": request.headers.get("X-KLAIM-Agent-Id") ?? "",
+      Authorization: request.headers.get("Authorization") ?? "",
+    };
+
+    // If the incoming MCP request already carries X-PAYMENT (external wallet), forward it
+    if (request.headers.get("X-PAYMENT")) {
+      baseHeaders["X-PAYMENT"] = request.headers.get("X-PAYMENT")!;
+    }
+
     const apiRequest = new Request(new URL(tool.endpoint, request.url).toString(), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-KLAIM-Agent-Id": request.headers.get("X-KLAIM-Agent-Id") ?? "",
-        Authorization: request.headers.get("Authorization") ?? "",
-        ...(request.headers.get("X-PAYMENT") ? { "X-PAYMENT": request.headers.get("X-PAYMENT")! } : {}),
-      },
+      headers: baseHeaders,
       body: JSON.stringify(args),
     });
+
+    console.log("[KLAIM x402] Requesting payment requirements");
     const res = await handleVerifyAge(apiRequest);
-    const json = (await res.json()) as Record<string, unknown>;
-    if (res.status === 402) {
+
+    // If not 402, return directly (200 success or other error)
+    if (res.status !== 402) {
+      const json = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        return { isError: true, content: `KLAIM verification failed: ${String(json['message'] ?? json['error'])}`, structured: json };
+      }
+      console.log("[KLAIM MCP] Returning verification result");
       return {
-        isError: true,
-        content:
-          "Payment required. This verification is billed per request via x402 on Algorand Testnet. Retry with an X-PAYMENT payload that satisfies the returned requirements.",
+        isError: false,
+        content: `${json['claim']} = ${String(json['verified'])}. No date of birth, Aadhaar, PAN, address or document was disclosed.`,
         structured: json,
       };
     }
-    if (!res.ok) {
-      return { isError: true, content: `KLAIM verification failed: ${String(json['message'] ?? json['error'])}`, structured: json };
+
+    // 402 received — attempt server-side payment if payer is configured
+    console.log("[KLAIM x402] 402 received");
+
+    if (!payerConfigured()) {
+      console.log("[KLAIM x402] Payer not configured — cannot complete payment");
+      return {
+        isError: true,
+        content: `Payment required but payer wallet is not configured server-side. Missing: ${missingPayerEnv().join(", ")}. Configure PAYER_WALLET_ADDRESS and PAYER_PRIVATE_KEY to enable automatic payment.`,
+        structured: { error: "PAYER_NOT_CONFIGURED", missing: missingPayerEnv() },
+      };
     }
+
+    // Sign payment using the same mechanism as scripts/test-x402.ts
+    let paymentHeaders: Record<string, string>;
+    try {
+      paymentHeaders = await signPaymentFromResponse(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[KLAIM x402] Payment signing failed:", msg);
+      return {
+        isError: true,
+        content: `Payment signing failed: ${msg}`,
+        structured: { error: "PAYMENT_SIGNING_FAILED", message: msg },
+      };
+    }
+
+    // Retry with payment attached
+    console.log("[KLAIM x402] X-PAYMENT attached, retrying");
+    const paidRequest = new Request(new URL(tool.endpoint, request.url).toString(), {
+      method: "POST",
+      headers: { ...baseHeaders, ...paymentHeaders },
+      body: JSON.stringify(args),
+    });
+
+    const paidRes = await handleVerifyAge(paidRequest);
+    const paidJson = (await paidRes.json()) as Record<string, unknown>;
+
+    if (paidRes.status !== 200) {
+      const msg = String(paidJson['message'] ?? paidJson['error'] ?? "Settlement failed");
+      console.error("[KLAIM x402] Settlement/verification failed:", msg);
+      return { isError: true, content: `Payment submitted but verification failed: ${msg}`, structured: paidJson };
+    }
+
+    // Success — real payment settled, verification complete
+    const payment = paidJson['payment'] as { txId?: string; explorerUrl?: string } | undefined;
+    console.log(`[KLAIM x402] Settlement successful`);
+    console.log(`[KLAIM x402] Algorand TX: ${payment?.txId ?? "unknown"}`);
+    console.log("[KLAIM MCP] Returning verification result");
+
     return {
       isError: false,
-      content: `${json['claim']} = ${String(json['verified'])}. No date of birth, Aadhaar, PAN, address or document was disclosed.`,
-      structured: json,
+      content: `${paidJson['claim']} = ${String(paidJson['verified'])}. No date of birth, Aadhaar, PAN, address or document was disclosed. Payment settled on Algorand Testnet: ${payment?.explorerUrl ?? payment?.txId ?? ""}`,
+      structured: paidJson,
     };
   };
 
