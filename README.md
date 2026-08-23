@@ -70,7 +70,60 @@ KLAIM performs the verification internally and returns:
 The underlying credential and personal information remain private.
 
 > **KLAIM sells verification, not identity data.**
+## 🔗 Verified Algorand Testnet Transactions
 
+KLAIM uses the **x402 payment protocol** to enable pay-per-use human verification.
+
+For the MVP, payments are settled in **USDC on Algorand Testnet**. The following transactions are real on-chain transfers from the **payer wallet → provider wallet**, each representing a **0.01 USDC verification payment**.
+
+> These are not simulated transaction IDs. They are real Algorand Testnet transactions and can be independently verified using the AlgoKit Lora explorer.
+
+### Live x402 Payment Evidence
+
+| # | Amount | Network | Flow | Transaction |
+|---|---:|---|---|---|
+| 1 | 0.01 USDC | Algorand Testnet | Payer → Provider | [View on Lora](https://lora.algokit.io/testnet/transaction/NFK244G4UE5OEBFXQEK4CFSFPZLLHLBOANA3IA47ACHYB2YIUF5Q) |
+| 2 | 0.01 USDC | Algorand Testnet | Payer → Provider | [View on Lora](https://lora.algokit.io/testnet/transaction/7LI27EZD7MZZYZKMTE4IMIQDPDD3BOPB5TPJURM7CIIYL2VROKZA) |
+| 3 | 0.01 USDC | Algorand Testnet | Payer → Provider | [View on Lora](https://lora.algokit.io/testnet/transaction/C7DO3LR4ZCTVP2IMATXQFDCSYPW2NE2ZATNREQ65G7ZOJUPOEL5A) |
+| 4 | 0.01 USDC | Algorand Testnet | Payer → Provider | [View on Lora](https://lora.algokit.io/testnet/transaction/4CSDN7BOSMTCCXMOKGNGNLITPSULC5H4OAZKK7OAHQROSX4ZIQ4A) |
+
+### What This Demonstrates
+
+The payment layer is designed around the following flow:
+
+```text
+AI Agent
+   │
+   │ MCP tool call
+   ▼
+KLAIM Verification API
+   │
+   │ No payment
+   ▼
+HTTP 402 Payment Required
+   │
+   │ x402 payment requirements
+   ▼
+AI Agent / Payer Wallet
+   │
+   │ Sign USDC payment
+   ▼
+GoPlausible Facilitator
+   │
+   │ Verify + settle
+   ▼
+Algorand Testnet
+   │
+   │ Real USDC transaction
+   ▼
+Provider Wallet
+   │
+   │ Settlement confirmed
+   ▼
+KLAIM Verification
+   │
+   ▼
+Verified Claim
 ---
 
 # 🎯 Problem
