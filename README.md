@@ -121,7 +121,8 @@ Application
  └── Full Document
 ```
 
-### KLAIM
+### KLAIM Archetecture
+<img width="1536" height="695" alt="architecture-klaim" src="https://github.com/user-attachments/assets/381f3c8c-bcd3-4ad3-85de-d7c2fa3c2c8c" />
 
 ```text
 User
