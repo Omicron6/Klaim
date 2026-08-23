@@ -1,6 +1,4 @@
-Yes — here is the **ready-to-copy-paste `README.md` content**. You can replace your entire README with this:
 
-````markdown
 # KLAIM
 
 ### Pay-Per-Use Human Verification API for AI Agents
